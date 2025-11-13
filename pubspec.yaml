@@ -1,0 +1,9 @@
+dependencies:
+  flutter:
+    sdk: flutter
+  http: ^1.1.0
+  http_parser: ^4.0.2
+  image_picker: ^1.0.4
+  file_picker: ^5.5.0
+  mime: ^1.0.4
+  path: ^1.8.3
