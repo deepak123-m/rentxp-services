@@ -8,6 +8,7 @@ const allowedOrigins = [
   "https://v0-frontend-ecomercetesting-app-atstqv.vercel.app",
   "https://v0-frontend-ecomercetesting-app.vercel.app",
   "https://v0-frontend-ecomercetesting-app-vpil0a.vercel.app",
+  "http://localhost:3000",
 ]
 
 const encryptPassword = (password: string) => {
@@ -23,143 +24,115 @@ const encryptPassword = (password: string) => {
 
 export async function POST(request: NextRequest) {
   try {
+    console.log("Signin request received")
 
-    const { data, error } = await supabaseAdmin.auth.admin.updateUserById('22620814-0492-4a4e-bfe8-121a68e4c896', {
-  email: 'cashier_warehouse@ismart.today',
-  user_metadata: {
-    email: 'cashier_warehouse@ismart.today'
-  }
-});
+    const headers = Object.fromEntries(request.headers.entries())
+    console.log("Request headers:", JSON.stringify(headers, null, 2))
 
-console.log('updateddd', data);
-console.log('errrorrr', error);
+    const body = await request.json().catch((err) => {
+      console.error("Error parsing request body:", err)
+      return null
+    })
 
+    console.log("Request body received:", JSON.stringify(body, null, 2))
 
-    // if(data){
-    //   console.log('rightdata',data)
-    // }
-    // if(error){
-    //   console.log('errorr',error)
-    // }
-    let passwordUser= encryptPassword("ganapa@123")
-    console.log("ayeshapassword",passwordUser)
-    // console.log("Signin request received")
+    if (!body) {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
+    }
 
-    // const headers = Object.fromEntries(request.headers.entries())
-    // console.log("Request headers:", JSON.stringify(headers, null, 2))
+    const { email, password, device_token, device_type = "unknown" } = body
 
-    // const body = await request.json().catch((err) => {
-    //   console.error("Error parsing request body:", err)
-    //   return null
-    // })
+    if (!email || !password) {
+      return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
+    }
 
-    // console.log("Request body received:", JSON.stringify(body, null, 2))
+    const supabase = createServerSupabaseClient()
 
-    // if (!body) {
-    //   return NextResponse.json({ error: "Invalid request body" }, { status: 400 })
-    // }
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    })
 
-    // const { email, password, device_token, device_type = "unknown" } = body
+    if (error) {
+      console.error("Supabase auth error:", error)
+      return NextResponse.json({ error: error.message }, { status: 401 })
+    }
 
-    // if (!email || !password) {
-    //   return NextResponse.json({ error: "Email and password are required" }, { status: 400 })
-    // }
+    const userId = data.user.id
 
-    // const supabase = createServerSupabaseClient()
+    // 🔁 Upsert device_token
+    if (device_token) {
+      const { error: upsertError } = await supabaseAdmin.from("device_tokens").upsert(
+        {
+          user_id: userId,
+          device_token,
+          device_type,
+        },
+        { onConflict: "user_id" },
+      )
 
-    // const { data, error } = await supabase.auth.signInWithPassword({
-    //   email,
-    //   password,
-    // })
+      if (upsertError) {
+        console.error("Error upserting device token:", upsertError)
+      }
+    }
 
-    // const { data, error } = await supabase.auth.signInWithPassword({
-    //   email,
-    //   password,
-    // })
+    // 🔐 Encrypt & update password/email in 'profiles' if null
+    const { data: existingProfile, error: profileCheckError } = await supabase
+      .from("profiles")
+      .select("hash_password, email")
+      .eq("id", userId)
+      .single()
 
-    // if (error) {
-    //   console.error("Supabase auth error:", error)
-    //   return NextResponse.json({ error: error.message }, { status: 401 })
-    // }
+    if (profileCheckError) {
+      console.error("Error checking profiles table:", profileCheckError)
+    } else {
+      const updates: Record<string, any> = {}
 
-    // const userId = data.user.id
+      if (!existingProfile.hash_password) {
+        updates.hash_password = encryptPassword(password)
+      }
 
-    // // 🔁 Upsert device_token
-    // if (device_token) {
-    //   const { error: upsertError } = await supabaseAdmin.from("device_tokens").upsert(
-    //     {
-    //       user_id: userId,
-    //       device_token,
-    //       device_type,
-    //     },
-    //     { onConflict: "user_id" }
-    //   )
+      if (!existingProfile.email) {
+        updates.email = data.user.email
+      }
 
-    //   if (upsertError) {
-    //     console.error("Error upserting device token:", upsertError)
-    //   }
-    // }
+      if (Object.keys(updates).length > 0) {
+        const { error: updateError } = await supabase.from("profiles").update(updates).eq("id", userId)
 
-    // // 🔐 Encrypt & update password/email in 'profiles' if null
-    // const { data: existingProfile, error: profileCheckError } = await supabase
-    //   .from("profiles")
-    //   .select("hash_password, email")
-    //   .eq("id", userId)
-    //   .single()
+        if (updateError) {
+          console.error("Error updating profiles table:", updateError)
+        } else {
+          console.log("Profiles table updated with encrypted password and/or email")
+        }
+      }
+    }
 
-    // if (profileCheckError) {
-    //   console.error("Error checking profiles table:", profileCheckError)
-    // } else {
-    //   const updates: Record<string, any> = {}
+    // 📄 Get user profile from gc_profiles (optional)
+    const { data: profile, error: profileError } = await supabase
+      .from("gc_profiles")
+      .select("*")
+      .eq("id", userId)
+      .single()
 
-    //   if (!existingProfile.hash_password) {
-    //     updates.hash_password = encryptPassword(password)
-    //   }
+    if (profileError) {
+      console.error("Profile fetch error:", profileError)
+    }
 
-    //   if (!existingProfile.email) {
-    //     updates.email = data.user.email
-    //   }
+    console.log("Login successful for user:", data)
 
-    //   if (Object.keys(updates).length > 0) {
-    //     const { error: updateError } = await supabase
-    //       .from("profiles")
-    //       .update(updates)
-    //       .eq("id", userId)
+    const response = NextResponse.json({
+      message: "Signed in successfully",
+      user: data.user,
+      profile,
+      session: data.session,
+    })
 
-    //     if (updateError) {
-    //       console.error("Error updating profiles table:", updateError)
-    //     } else {
-    //       console.log("Profiles table updated with encrypted password and/or email")
-    //     }
-    //   }
-    // }
-
-    // // 📄 Get user profile from gc_profiles (optional)
-    // const { data: profile, error: profileError } = await supabase
-    //   .from("gc_profiles")
-    //   .select("*")
-    //   .eq("id", userId)
-    //   .single()
-
-    // if (profileError) {
-    //   console.error("Profile fetch error:", profileError)
-    // }
-
-    // console.log("Login successful for user:", data)
-
-    // const response = NextResponse.json({
-    //   message: "Signed in successfully",
-    //   user: data.user,
-    //   profile,
-    //   session: data.session,
-    // })
-
-    // // ✅ CORS handling
-    // const origin = request.headers.get("origin") || ""
-    // if (allowedOrigins.includes(origin)) {
-    //   response.headers.set("Access-Control-Allow-Origin", origin)
-    //   response.headers.set("Access-Control-Allow-Credentials", "true")
-    // }
+    // ✅ CORS handling
+    const origin = request.headers.get("origin") || ""
+    if (allowedOrigins.includes(origin)) {
+      response.headers.set("Access-Control-Allow-Origin", origin)
+      response.headers.set("Access-Control-Allow-Credentials", "true")
+    }
 
     return response
   } catch (error) {
@@ -169,7 +142,7 @@ console.log('errrorrr', error);
         error: "An unexpected error occurred",
         details: error instanceof Error ? error.message : String(error),
       },
-      { status: 500 }
+      { status: 500 },
     )
   }
 }
